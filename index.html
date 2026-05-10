@@ -480,7 +480,10 @@ body.admin-mode .card-admin-actions{display:flex;}
 </footer>
 
 <script>
-const STORAGE_KEY = 'bazarSofia_v2';
+// ── Configuración Firebase ──────────────────────────────────────
+// Pega tu URL de Firebase Realtime Database aquí (termina en .firebaseio.com)
+const FIREBASE_URL = 'https://almacen-bazar-de-sofia-default-rtdb.firebaseio.com';
+// ────────────────────────────────────────────────────────────────
 const ADMIN_HASH = '345a51824c9a364ab83b9471def75fe4bccb7848beee7235ed8ea6f47f24348d';
 
 const DEFAULT_PRODUCTS = [
@@ -498,18 +501,65 @@ let products = [];
 let editingId = null;
 let activeSize = 'all';
 
-// ── Storage ──
+// ── Firebase Storage ──
 async function loadProducts() {
-  try {
-    const r = await window.storage.get(STORAGE_KEY);
-    products = r && r.value ? JSON.parse(r.value) : [...DEFAULT_PRODUCTS];
-  } catch(e) {
-    products = [...DEFAULT_PRODUCTS];
+  // Si Firebase no está configurado, usa los productos por defecto
+  if (!FIREBASE_URL || FIREBASE_URL === 'TU_URL_AQUI') {
+    products = getLocalCache() || [...DEFAULT_PRODUCTS];
+    applyFilters();
+    return;
   }
+  try {
+    showLoadingState();
+    const res = await fetch(FIREBASE_URL + '/productos.json');
+    const data = await res.json();
+    if (data && typeof data === 'object') {
+      // Firebase devuelve un objeto con claves, convertimos a array
+      products = Object.entries(data).map(([key, val]) => ({...val, _fbKey: key}));
+    } else {
+      products = getLocalCache() || [...DEFAULT_PRODUCTS];
+    }
+  } catch(e) {
+    console.warn('Firebase no disponible, usando caché local:', e);
+    products = getLocalCache() || [...DEFAULT_PRODUCTS];
+  }
+  setLocalCache(products);
   applyFilters();
 }
+
 async function saveProducts() {
-  try { await window.storage.set(STORAGE_KEY, JSON.stringify(products)); } catch(e) {}
+  setLocalCache(products);
+  if (!FIREBASE_URL || FIREBASE_URL === 'TU_URL_AQUI') return;
+  // Guardamos cada producto como nodo en Firebase
+  // Reconvertimos el array a objeto para Firebase
+  try {
+    const obj = {};
+    for (const p of products) {
+      const key = p._fbKey || p.id;
+      const {_fbKey, ...rest} = p;
+      obj[key] = rest;
+    }
+    await fetch(FIREBASE_URL + '/productos.json', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(obj)
+    });
+  } catch(e) {
+    console.error('Error guardando en Firebase:', e);
+    showToast('⚠ Error al guardar en la nube');
+  }
+}
+
+// ── LocalStorage cache (fallback y velocidad) ──
+function getLocalCache() {
+  try { return JSON.parse(localStorage.getItem('bazarSofia_cache')); } catch(e){ return null; }
+}
+function setLocalCache(data) {
+  try { localStorage.setItem('bazarSofia_cache', JSON.stringify(data)); } catch(e){}
+}
+function showLoadingState() {
+  const grid = document.getElementById('productGrid');
+  grid.innerHTML = '<div class="no-results" style="opacity:0.5"><span>🌸</span><p>Cargando catálogo…</p></div>';
 }
 
 // ── Render / Filters ──
